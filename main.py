@@ -1,4 +1,5 @@
-import requests, os
+import requests, os, json
+from datetime import datetime
 
 FOOTBALL_TOKEN = os.getenv("FOOTBALL_TOKEN")
 FB_TOKEN = os.getenv("FB_TOKEN")
@@ -8,37 +9,40 @@ HEADERS = {"X-Auth-Token": FOOTBALL_TOKEN}
 def post_fb(message):
     url = f"https://graph.facebook.com/{FB_PAGE_ID}/feed"
     r = requests.post(url, data={"message": message, "access_token": FB_TOKEN})
-    print(r.text)
-    return r.text
+    print(f"FB: {r.text}")
 
-# On prend LIVE + IN_PLAY + FINISHED aujourd'hui pour être sûr d'avoir quelque chose
-url = "https://api.football-data.org/v4/matches?status=LIVE,IN_PLAY,PAUSED"
-resp = requests.get(url, headers=HEADERS)
-print(f"API status: {resp.status_code}")
-data = resp.json()
-print(f"Matches trouvés: {data.get('resultSet', {}).get('count', 0)}")
+# 1. Essaye LIVE d'abord
+url_live = "https://api.football-data.org/v4/matches?status=LIVE,IN_PLAY,PAUSED"
+data_live = requests.get(url_live, headers=HEADERS).json()
+live = data_live.get("matches", [])
 
-matches = data.get("matches", [])
-
-if not matches:
-    print("Aucun match live en ce moment, Fini")
-else:
-    for m in matches:
+if live:
+    for m in live:
         home = m["homeTeam"]["shortName"]
         away = m["awayTeam"]["shortName"]
-        comp = m["competition"]["name"]
-        minute = m.get("minute", "")
-        # Pour le live, le score est dans fullTime ou halfTime
-        score = m["score"]
-        sh = score.get("fullTime", {}).get("home")
-        sa = score.get("fullTime", {}).get("away")
-        if sh is None:
-            sh = score.get("halfTime", {}).get("home", 0)
-            sa = score.get("halfTime", {}).get("away", 0)
-        
-        status = m["status"]
-        msg = f"⚽ {minute}' LIVE - {status}\n{home} {sh}-{sa} {away}\n🏆 {comp}\n\n#INFOscore"
-        print(f"Post: {msg}")
+        minute = m.get("minute") or "LIVE"
+        sh = m["score"]["fullTime"]["home"] or m["score"]["halfTime"]["home"] or 0
+        sa = m["score"]["fullTime"]["away"] or m["score"]["halfTime"]["away"] or 0
+        msg = f"🔴 {minute}' EN DIRECT\n{home} {sh}-{sa} {away}\n🏆 {m['competition']['name']}\n\n#Infoscore #LIVE"
         post_fb(msg)
+else:
+    # Pas de live, on poste le résumé du jour (1 fois seulement si tu veux tester)
+    print("Pas de live, on prend les matchs du jour")
+    url_day = "https://api.football-data.org/v4/matches"
+    data_day = requests.get(url_day, headers=HEADERS).json()
+    todays = data_day.get("matches", [])[:4]
+    
+    if todays:
+        msg = f"⚽ PROGRAMME DU JOUR - {datetime.now().strftime('%d/%m')}\n\n"
+        for m in todays:
+            h = m["homeTeam"]["shortName"]
+            a = m["awayTeam"]["shortName"]
+            hour = m["utcDate"][11:16]
+            msg += f"{hour} - {h} vs {a} - {m['status']}\n"
+        msg += "\n#Infoscore"
+        # Pour le test, on poste. Après tu peux commenter cette ligne
+        post_fb(msg)
+    else:
+        print("Rien aujourd'hui non plus")
 
 print("Fini")
